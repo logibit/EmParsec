@@ -206,6 +206,21 @@ let sepBy parser sep =
   sepBy1 parser sep <|> Parser.return' []
   <?> sprintf "<sepBy %s separated by %s>" parser.Label sep.Label
 
+let recompose (chars : char list) =
+  chars
+  |> List.map string
+  |> String.concat ""
+
+let pend =
+  let label = "<end>"
+  let inner stream =
+    match stream with
+    | Next ([], _) -> Success ((), stream)
+    | _ -> Error (label,
+                  sprintf "Unexpected input remaining '%s'" <| recompose stream.Remaining,
+                  stream.Location)
+  { ParseFunc = inner; Label = label }
+
 let satisfy predicate label =
   let inner stream =
     match stream with
