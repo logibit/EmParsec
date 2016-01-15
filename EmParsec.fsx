@@ -1,6 +1,6 @@
 #if INTERACTIVE
 #else
-module internal TParsec
+module internal EmParsec
 #endif
 
 open System
