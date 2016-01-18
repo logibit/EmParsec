@@ -24,4 +24,4 @@ test "pstring with additional" thingP "thing  " "thing"
 test "pstring exact" thingP "thing" "thing"
 
 test "pend exact match" (thingP .>> pend) "thing" "thing"
-test "pend exact match" (thingP .>> pend) "thing  h" "thing"
+shouldFailTest "pend with additional stuff on end" (thingP .>> pend) "thing  h"
