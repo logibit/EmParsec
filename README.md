@@ -1,6 +1,8 @@
 EmParsec
 ========
 
+[![Build Status](https://travis-ci.org/mavnn/EmParsec.svg?branch=master)](https://travis-ci.org/mavnn/EmParsec)
+
 EmParsec is a single file, embeddable combinator parser for use in situations where it is more important to avoid binary dependencies than it is to have the best possible performance.
 
 If you've used FParsec, it should seem very familiar to you!
