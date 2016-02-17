@@ -1,4 +1,4 @@
-#load "EmParsec.fsx"
+#load "EmParsec.fs"
 open System
 open EmParsec
 

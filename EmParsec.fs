@@ -1,4 +1,5 @@
 #if INTERACTIVE
+module EmParsec
 #else
 module internal EmParsec
 #endif
