@@ -8,7 +8,8 @@ let test name parser input expected =
     if r = expected then
       printfn "*** Test '%s' passed" name
     else
-      failwithf "*** Test '%s' failed, expect %A but received %A" name expected r
+      sprintf "*** Test '%s' failed, expect %A but received %A" name expected r
+      |> failwith
   | Choice2Of2 err ->
     failwithf "*** Test '%s' failed with parser error:\n%s" name err
 
@@ -73,3 +74,50 @@ test "spaces with no spaces" spaces "a" ()
 test "spaces1" spaces1 "  \n\t\r\n" ()
 
 shouldFailTest "spaces1 with no space" spaces1 "a"
+
+// Mini template parser example
+
+type TemplatePart =
+  | Text of string
+  | Value of string
+
+let notOpenBracket : UParser<char> =
+  satisfy (fun c -> c <> char '{') "not open bracket"
+
+let textParser : UParser<TemplatePart> =
+  many1 notOpenBracket
+  |>> (fun charList ->
+         charList
+         |> List.map string
+         |> String.concat ""
+         |> Text)
+  <?> "<text parser>"
+
+let valueName : UParser<string> =
+  many1 (satisfy (fun c -> c <> '}' && (not <| System.Char.IsWhiteSpace c)) "")
+  |>> (fun charList -> charList |> List.map string |> String.concat "")
+  .>> spaces
+
+let openValue : UParser<unit> =
+  pchar '{' .>>. spaces
+  |>> ignore
+
+let closeValue : UParser<unit> =
+  pchar '}'
+  |>> ignore
+
+let value : UParser<TemplatePart> =
+
+  between openValue closeValue valueName
+  |>> Value
+  <?> "<value parser>"
+
+let template : UParser<TemplatePart list> =
+  many (value <|> textParser)
+  .>> eof
+  <?> "<template parser>"
+
+test "mini template 1" template "hello world" [Text "hello world"]
+test "mini template 2" template "hello { bob\n }" [Text "hello "; Value "bob"]
+test "mini template 3" template "hello { name1 } and {name2}" [Text "hello "; Value "name1"; Text " and "; Value "name2"]
+shouldFailTest "mini template 4" template "hello { name"
