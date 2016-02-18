@@ -15,10 +15,14 @@ with
   override x.ToString() =
     sprintf "line %d, column %d" x.Line x.Column
 
+type ParserState<'UserState> =
+  { UserState : 'UserState
+    Label : ParserLabel }
+
 type CharStream<'UserState> =
   { Remaining : char list
     Original  : string
-    State     : 'UserState
+    State     : ParserState<'UserState>
     Location  : Location }
 
 type Reply<'Result, 'UserState> =
@@ -51,8 +55,7 @@ let (|Next|) (stream : CharStream<_>) : char list * CharStream<_> =
     [], stream
 
 type Parser<'Result, 'UserState> =
-  { ParseFunc : (CharStream<'UserState> -> Reply<'Result, 'UserState>)
-    Label : ParserLabel }
+  CharStream<'UserState> -> Reply<'Result, 'UserState>
 
 type UParser<'Result> = Parser<'Result, unit>
 
@@ -70,14 +73,13 @@ module Reply =
       f r s
     | Error (lab, err, l) -> Error (lab, err, l)
 
-let setLabel parser newLabel =
-  let newFunc stream =
-    match parser.ParseFunc stream with
-    | Success (r, s) -> Success (r, s)
-    | Error (lab, msg, l) -> Error (newLabel, msg, l)
-  { ParseFunc = newFunc; Label = newLabel }
+let setLabel newLabel (parser : Parser<_,_>) : Parser<_,_> =
+  fun stream ->
+    match parser stream with
+    | Success (r, s) -> Success (r, { s with State = { s.State with Label = newLabel }})
+    | Error (lab, err, l) -> Error (newLabel, err, l)
 
-let (<?>) = setLabel
+let (<?>) parser label = setLabel label parser
 
 let showError (original : string) (label, msg, location) =
   if original = "" then
@@ -105,27 +107,22 @@ let showError (original : string) (label, msg, location) =
       failingLine
       errorMarker
 
-let andThen p1 p2 =
-  let inner stream =
-    p1.ParseFunc stream
-    |> Reply.bind
-      (fun r s ->
-        match p2.ParseFunc s with
-        | Success (r', s') -> Success ((r, r'), s')
-        | Error (lab, err, l) -> Error (lab, err, l))
-  { ParseFunc = inner
-    Label = "" }
-  <?> sprintf "(%s andThen %s)" p1.Label p2.Label
+let andThen (p1 : Parser<_,_>) (p2 : Parser<_,_>) : Parser<_,_> =
+    fun stream ->
+      p1 stream
+      |> Reply.bind
+          (fun r s ->
+            match p2 s with
+            | Success (r', s') -> Success ((r, r'), s')
+            | Error (lab, err, l) -> Error (lab, err, l))
+  |> setLabel "andThen"
 
 module Parser =
-  let map f p =
-    { ParseFunc = fun s -> p.ParseFunc s |> Reply.map f
-      Label = p.Label }
+  let map f (p : Parser<_,_>) stream =
+    p stream |> Reply.map f
 
-  let return' x =
-    let inner stream =
-      Success (x, stream)
-    { ParseFunc = inner; Label = "unknown" }
+  let return' x : Parser<_,_> =
+    fun stream -> Success (x, stream)
 
   let apply f p =
     andThen f p
@@ -134,27 +131,29 @@ module Parser =
   let lift2 f x y =
     apply (apply (return' f) x) y
 
-let run (parser : Parser<_, unit>) (str : string) =
+  let ignore (p : Parser<_,_>) =
+    map ignore p
+
+let run (parser : UParser<_>) (str : string) =
   let cs = {
       Remaining = str |> List.ofSeq
       Original = str
-      State = ()
+      State = { Label = "unknown"; UserState = () }
       Location = { Line = 0; Column = 0 }
     }
-  match parser.ParseFunc cs with
+  match parser cs with
   | Success (r, _) -> Choice1Of2 r
   | Error (lab, m, l) -> Choice2Of2 <| showError str (lab, m, l)
 
 let orElse p1 p2 =
   let inner stream =
-    match p1.ParseFunc stream with
+    match p1 stream with
     | Success (r, s) -> Success (r, s)
     | Error (lab, e, _) ->
-      match p2.ParseFunc stream with
+      match p2 stream with
       | Success (r, s) -> Success (r, s)
-      | Error (lab, e', l) -> Error (lab, e', l)
-  { ParseFunc = inner; Label = "" }
-  <?> sprintf "(%s orElse %s)" p1.Label p2.Label
+      | Error (lab', e', l) -> Error (lab', e', l)
+  inner <?> "orElse"
 
 let (<!>) = Parser.map
 
@@ -180,12 +179,12 @@ let sequence parsers =
 
 let many parser =
   let rec inner results stream =
-    match parser.ParseFunc stream with
+    match parser stream with
     | Success (r, s) ->
       inner (r::results) s
     | Error _ ->
       Success (results |> List.rev, stream)
-  { ParseFunc = inner []; Label = sprintf "<many %s>" parser.Label }
+  inner []
 
 let many1 parser =
   parser .>>. (many parser)
@@ -201,26 +200,24 @@ let sepBy1 parser sep =
   let sepThenP = sep >>. parser
   parser .>>. many sepThenP
   |>> fun (r, rs) -> r::rs
-  <?> sprintf "<sepBy1 %s separated by %s>" parser.Label sep.Label
 
 let sepBy parser sep =
   sepBy1 parser sep <|> Parser.return' []
-  <?> sprintf "<sepBy %s separated by %s>" parser.Label sep.Label
 
 let recompose (chars : char list) =
   chars
   |> List.map string
   |> String.concat ""
 
-let pend =
-  let label = "<end>"
+let eof stream =
+  let label = "<eof>"
   let inner stream =
     match stream with
     | Next ([], _) -> Success ((), stream)
     | _ -> Error (label,
                   sprintf "Unexpected input remaining '%s'" <| recompose stream.Remaining,
                   stream.Location)
-  { ParseFunc = inner; Label = label }
+  stream |> (inner <?> label)
 
 let satisfy predicate label =
   let inner stream =
@@ -230,7 +227,7 @@ let satisfy predicate label =
       Success (h, s)
     | Next (a, _) ->
       Error (label, sprintf "Unexpected %A" a, stream.Location)
-  { ParseFunc = inner; Label = label }
+  inner <?> label
 
 let pchar c : Parser<char, 'a> =
   satisfy ((=) c) (sprintf "<char %c>" c)
@@ -239,7 +236,6 @@ let anyOf chars =
   chars
   |> List.map pchar
   |> List.reduce orElse
-  <?> (sprintf "<anyOf %A>" chars)
 
 let pstring (str : string) : Parser<string, 'a> =
   str
@@ -247,5 +243,22 @@ let pstring (str : string) : Parser<string, 'a> =
   |> List.map pchar
   |> List.reduce (.>>)
   |> Parser.map (fun _ -> str)
-  <?> (sprintf "<string %s>" str)
 
+let space stream =
+  let inner =
+    [ " "
+      "\r\n"
+      "\n"
+      "\r"
+      "\t" ]
+    |> List.map pstring
+    |> List.reduce orElse
+  inner stream
+
+let spaces stream =
+  stream
+  |> (many space |> Parser.ignore)
+
+let spaces1 stream = 
+  stream
+  |> (many1 space |> Parser.ignore)

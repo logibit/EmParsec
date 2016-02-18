@@ -24,13 +24,12 @@ let thingP = pstring "thing"
 test "pstring with additional" thingP "thing  " "thing"
 test "pstring exact" thingP "thing" "thing"
 
-test "pend exact match" (thingP .>> pend) "thing" "thing"
-shouldFailTest "pend with additional stuff on end" (thingP .>> pend) "thing  h"
+test "eof exact match" (thingP .>> eof) "thing" "thing"
+shouldFailTest "eof with additional stuff on end" (thingP .>> eof) "thing  h"
 
 let quotedString =
   between (pchar '"') (pchar '"') (many (satisfy (fun c -> c <> '"') ""))
   |>> recompose
-  <?> "<quotedString>"
 
 test "quotedString" quotedString "\"hello world\"" "hello world"
 shouldFailTest "unclosed quotedString" quotedString "\"hello!"
@@ -38,7 +37,6 @@ shouldFailTest "unclosed quotedString" quotedString "\"hello!"
 let number =
   (many (satisfy Char.IsDigit ""))
   |>> recompose
-  <?> "<number>"
 
 test "number or quoted string (string)" (quotedString <|> number) "\"Boo\"" "Boo"
 test "number or quoted string (number)" (quotedString <|> number) "10" "10"
@@ -67,3 +65,11 @@ let operatorWorkout =
   |>> fun (n, s) -> sprintf "%s %d" s n
 
 test "operators" operatorWorkout "10 漢字" "漢字 10"
+
+test "spaces" spaces "   " ()
+
+test "spaces with no spaces" spaces "a" ()
+
+test "spaces1" spaces1 "  \n\t\r\n" ()
+
+shouldFailTest "spaces1 with no space" spaces1 "a"
